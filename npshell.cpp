@@ -14,16 +14,17 @@ using namespace std;
 #define DEBUG_BLOCK(statement) do { statement } while (0)
 #endif
 
-
+#define MAX_ARGUMENTS 10
 
 deque<char*> cmd;
 class my_proc {
 public:
-    my_proc(char* cname): cname(cname), next(nullptr), arg_list{'\0'}, line_count(-1) {}
+    my_proc(char* cname): cname(cname), next(nullptr), arg_count(1), arg_list{cname, NULL}, line_count(-1) {}
     my_proc* next;
     deque<my_proc*> prev;
     char* cname;
-    char arg_list[256];
+    int arg_count;
+    char* arg_list[10];
     int line_count;
 
 };
@@ -44,16 +45,35 @@ bool check_unknown(char* cmd_name) {
         cerr << " Unknown command: [" << cmd_name << "]." << endl;
         return true;
     }*/
-    if (access(cmd_name, F_OK) == -1) {
-        cerr << " Unknown command: [" << cmd_name << "]." << endl;
-        return true;
+    if (access(cmd_name, F_OK) != -1) {
+        return false;
     }
-    return false;
+    char* env = (char*)malloc(sizeof(char)*100);
+    //getenv("PATH");
+    strcpy(env, getenv("PATH"));
+    char* p = NULL;
+    do {
+        p = strchr(env, ':');
+        if (p != NULL) {
+            p[0] = '\0';
+        }
+        char path[256];
+        strcpy(path, env);
+        strcat(path, cmd_name);
+        cout << "path:" << path << endl;
+        if (access(path, F_OK) != -1) {
+            return false;
+        }
+        env = p+1;
+    } while (p != NULL);
+    cerr << "Unknown command: [" << cmd_name << "]." << endl;
+    return true;
+
 }
 
 void read_pipe(int readfd, int writefd) {
 
-    close(0);
+    close(stdin);
     dup(readfd);
     close(readfd);
     close(writefd);
@@ -62,7 +82,7 @@ void read_pipe(int readfd, int writefd) {
 }
 void write_pipe(int readfd, int writefd) {
 
-    close(1);
+    close(stdout);
     dup(writefd);
     close(readfd);
     close(writefd);
@@ -129,13 +149,13 @@ void do_pipe(my_proc* cur, my_proc* nxt) {
     int wstatus;
     proc_ptr+=2;
     // check unknown command
-    if (check_unknown(cur->cname)) {
+    /*if (check_unknown(cur->cname)) {
         proc_ptr--;
         return;
     }
     if (check_unknown(nxt->cname)) {
         return;
-    }
+    }*/
     create_pipe(&pipefd[0]);
 
     childpid1 = fork();
@@ -145,7 +165,7 @@ void do_pipe(my_proc* cur, my_proc* nxt) {
     else if (childpid1 == 0) {
         // child process
         write_pipe(pipefd[0], pipefd[1]);
-        execlp(cur->cname, cur->arg_list, NULL);
+        execvp(cur->cname, cur->arg_list);
     }
     else {
         //parent process
@@ -156,7 +176,7 @@ void do_pipe(my_proc* cur, my_proc* nxt) {
         else if (childpid2 == 0) {
             //child process
             read_pipe(pipefd[0], pipefd[1]);
-            execlp(nxt->cname, nxt->arg_list, NULL);
+            execvp(nxt->cname, nxt->arg_list);
         }
         else {
             //parent process
@@ -174,7 +194,7 @@ void do_fork(my_proc* cur) {
     int wstatus;
     proc_ptr++;
     if (check_unknown(cur->cname)) {
-        proc_ptr--;
+        //proc_ptr--;
         return;
     }
     childpid = fork();
@@ -183,7 +203,7 @@ void do_fork(my_proc* cur) {
     }
     else if (childpid == 0) {
         //child process
-        execlp(cur->cname, "ls", "-l", "bin", NULL);
+        execvp(cur->cname, cur->arg_list);
     }
     else {
         //parent process
@@ -249,6 +269,23 @@ void read_cmd() {
 
         if (cmd.size() != 0) {    //this block is used for reading pipes or arguments
             next_cmd = cmd.front();
+            while (next_cmd[0] != '|') {  //check whether next is the current command's argument
+                if (cur->arg_count >= MAX_ARGUMENTS-1) {   // last one is NULL
+                    cerr << "reach argument number limit for command:" << cur_cmd << endl;
+                    cmd.pop_front();
+                }
+                cur->arg_list[cur->arg_count++] = strdup(next_cmd);
+                cur->arg_list[cur->arg_count] = NULL;
+                DEBUG_BLOCK (
+                         cout << "read argument: " << next_cmd << endl;
+                         );
+
+                cmd.pop_front();
+                if (cmd.size() == 0) {
+                    break;
+                }
+                next_cmd = cmd.front();
+            }
             if (strcmp(next_cmd, "|") == 0) { //pipe to next
                 cur->line_count = 1;
                 cmd.pop_front();
@@ -262,9 +299,33 @@ void read_cmd() {
                 );
                 cmd.pop_front();
             }
-            else if (next_cmd[0] == '-' || access(next_cmd, F_OK) != -1) {  //check whether next is the current command's argument
-                strcat(cur->arg_list, next_cmd);
-                strcat(cur->arg_list, " ");
+            /*else {
+                while (next_cmd[0] == '-' || access(next_cmd, F_OK) != -1) {  //check whether next is the current command's argument
+                    if (cur->arg_count >= MAX_ARGUMENTS-1) {   // last one is NULL
+                        cerr << "reach argument number limit for command:" << cur_cmd << endl;
+                        cmd.pop_front();
+                    }
+                    cur->arg_list[cur->arg_count++] = strdup(next_cmd);
+                    cur->arg_list[cur->arg_count] = NULL;
+                    DEBUG_BLOCK (
+                             cout << "read argument: " << next_cmd << endl;
+                             );
+
+                    cmd.pop_front();
+                    if (cmd.size() == 0) {
+                        break;
+                    }
+                    next_cmd = cmd.front();
+                }
+            }*/
+            /*else if (next_cmd[0] == '-' || access(next_cmd, F_OK) != -1) {  //check whether next is the current command's argument
+                if (arg_count >= MAX_ARGUMENTS) {
+                    cerr << "reach argument number limit for command:" << cur_cmd << endl;
+                    cmd.pop_front();
+                }
+                strcpy(cur->arg_list[cur->arg_count++]);
+                //strcat(cur->arg_list, next_cmd);
+                //strcat(cur->arg_list, " ");
                 DEBUG_BLOCK (
                              cout << "read argument: " << next_cmd << endl;
                              );
@@ -280,7 +341,7 @@ void read_cmd() {
                     cmd.pop_front();
                 }
 
-            }
+            }*/
         }
 
         line_counter();
@@ -291,13 +352,15 @@ void read_cmd() {
     return;
 }
 
+char* get_next_position()
+
 int main(int argc, char** argv, char** envp) {
 
 
     char* cur_cmd;
 
     //initial PATH environment varible
-    //setenv("PATH", )
+    setenv("PATH", "bin/:.", 1);
     while (1) {
         char lined_cmd[20000];
 
@@ -314,12 +377,16 @@ int main(int argc, char** argv, char** envp) {
             }
 
             else if (strcmp(cur_cmd, "printenv") == 0) {
-                cur_cmd = strtok(NULL, " ");
+                char* arg = strtok(NULL, " ");
                 if (cur_cmd == NULL) {
                     cerr << "error: need arguments for printenv" << endl;
                     break;
                 }
-                cout << getenv(cur_cmd) << endl;
+                char* env = getenv(arg);
+                if (env != NULL) {
+                    cout << env << endl;
+                }
+
             }
             else if (strcmp(cur_cmd, "setenv") == 0) {
                 char* arg1 = strtok(NULL, " ");
@@ -333,6 +400,7 @@ int main(int argc, char** argv, char** envp) {
                     cerr << "error: need arguments for setenv" << endl;
                     break;
                 }
+                cout << "setenv " << arg1 << " " << arg2 << endl;
                 setenv(arg1, arg2, 1);
 
             }
