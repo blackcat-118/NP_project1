@@ -114,7 +114,15 @@ void close_pipe(int fd1, int fd2) {
     close(fd2);
     return;
 }
+void close_pipes(vector<int> fd) {
 
+    for (int i = 0; i < fd.size(); i++) {
+        //cout << "close: " << fd[i] << endl;
+        close(fd[i]);
+    }
+
+    return;
+}
 
 void do_pipe(my_proc* cur, my_proc* nxt) {
     //cout << "do pipe" << endl;
@@ -196,6 +204,7 @@ void do_pipe(my_proc* cur, my_proc* nxt) {
 
     return;
 }
+
 void set_prev_completed(my_proc* p) {
     for (int i = 0; i < p->prev.size(); i++) {
         my_proc* p1 = p->prev[i];
@@ -204,12 +213,15 @@ void set_prev_completed(my_proc* p) {
     }
     return;
 }
+vector<int> used_pipe;
+deque<my_proc*> exist_proc;
 void do_fork(my_proc* p, int depth, int readfd, int writefd) {
     //just do fork
     int wstatus;
     int pipefd[2];
-    my_proc* nxt = p->next;
 
+    my_proc* nxt = p->next;
+    //cout << "cname: " << p->cname<<endl;
     if (nxt == nullptr) { // reach pipeline end
         if (check_unknown(p->cname)) {
             p->completed = true;
@@ -217,6 +229,7 @@ void do_fork(my_proc* p, int depth, int readfd, int writefd) {
             return;
         }
         p->pid = fork();
+        exist_proc.push_back(p);
         if (p->pid == -1) {
             cerr << "can't fork" << endl;
         }
@@ -224,19 +237,27 @@ void do_fork(my_proc* p, int depth, int readfd, int writefd) {
             //child process
             if (readfd != 0) {
                 read_pipe(readfd);
-                close(readfd);
+                //close(readfd);
             }
             if (writefd != 1) {
-                close(writefd);
+                //close(writefd);
             }
+            //cout << p->cname << endl;
+            close_pipes(used_pipe);
 
             //close_pipe(readfd, writefd);
             execvp(p->cname, p->arg_list);
             exit(0);
         }
-        /*else {
+        else {
             //parent process
             //close_pipe(readfd, writefd);
+            /*if (readfd != 0) {
+                close(readfd);
+            }
+            if (writefd != 1) {
+                close(writefd);
+            }
             if (!p->prev.empty()) {
                 if (waitpid(p->prev.back()->pid, &wstatus, 0) == -1) {
                     cerr << "failed to wait for child" << endl;
@@ -245,13 +266,13 @@ void do_fork(my_proc* p, int depth, int readfd, int writefd) {
                     p->prev.back()->completed = true;
                 }
             }
-            if (waitpid(p->pid, &wstatus, 0) == -1) {
+            /*if (waitpid(p->pid, &wstatus, 0) == -1) {
                 cerr << "failed to wait for child" << endl;
             }
             else {
                 p->completed = true;
-            }
-        }*/
+            }*/
+        }
     }
     else {   // check whether next process has other previous processes to merge
         if (check_unknown(nxt->cname)) {
@@ -259,7 +280,20 @@ void do_fork(my_proc* p, int depth, int readfd, int writefd) {
             set_prev_completed(nxt);
             return;
         }
+        if (depth >= 256) {
+            my_proc* pr = exist_proc.front();
+            if (waitpid(pr->pid, &wstatus, 0) == -1) {
+                cerr << "failed to wait for child" << endl;
+            }
+            else {
+                pr->completed = true;
+            }
+        }
         create_pipe(&pipefd[0]);
+        used_pipe.push_back(pipefd[0]);
+        used_pipe.push_back(pipefd[1]);
+
+        //do_fork(nxt, depth+1, pipefd[0], pipefd[1]);
         for (int i = 0; i < nxt->prev.size(); i++) {
             my_proc* p1 = nxt->prev[i];
             // check unknown command
@@ -270,6 +304,7 @@ void do_fork(my_proc* p, int depth, int readfd, int writefd) {
             }
 
             p1->pid = fork();
+            exist_proc.push_back(p1);
             if (p1->pid == -1) {
                 cerr << "can't fork" << endl;
             }
@@ -281,6 +316,8 @@ void do_fork(my_proc* p, int depth, int readfd, int writefd) {
                 }
                 write_pipe(pipefd[1]);
                 //close_pipe(pipefd[0], pipefd[1]);
+                //cout << p1->cname << endl;
+                close_pipes(used_pipe);
 
                 execvp(p1->cname, p1->arg_list);
 
@@ -290,6 +327,7 @@ void do_fork(my_proc* p, int depth, int readfd, int writefd) {
                 //parent process
 
                 if (nxt->pid < 0) {
+
                     do_fork(nxt, depth+1, pipefd[0], pipefd[1]);
                 }
 
@@ -304,13 +342,21 @@ void do_fork(my_proc* p, int depth, int readfd, int writefd) {
             }
 
         }
-        /*if (waitpid(nxt->pid, &wstatus, 0) == -1) {
+        close_pipe(pipefd[0], pipefd[1]);
+        /*if (!nxt->prev.empty()) {
+            if (waitpid(nxt->prev.back()->pid, &wstatus, 0) == -1) {
+                cerr << "failed to wait for child" << endl;
+            }
+            else {
+                nxt->prev.back()->completed = true;
+            }
+        }
+        if (waitpid(nxt->pid, &wstatus, 0) == -1) {
             cerr << "waiting for child failed" << endl;
         }
         else {
             nxt->completed = true;
         }*/
-        //close_pipe(pipefd[0], pipefd[1]);
 
     }
 
@@ -384,6 +430,12 @@ void exec_cmd() {
             continue;
 
         if (p->line_count <= 0) {  //it means p's next is ready
+            used_pipe.clear();
+            if (check_unknown(p->cname)) {
+                p->completed = true;
+                set_prev_completed(p);
+                continue;
+            }
             my_proc* nxt = p->next;
             if (nxt == nullptr) { //if it doesn't have next
                 do_fork(p, 0, 0, 1);
@@ -399,47 +451,33 @@ void exec_cmd() {
                     if (nxt->line_count > 0) { //it means next's next is not ready
                         break;
                     }
+                    if (check_unknown(nxt->cname)) {
+                        nxt->completed = true;
+                        set_prev_completed(nxt);
+                        break;
+                    }
                     if (nxt->next == nullptr) { //reach pipeline end
                         do_fork(p, 0, 0, 1);
-                        /*if (waitpid(nxt->pid, &wstatus, 0) == -1) {
-                            cerr << "failed to wait for child" << endl;
-                        }
-                        else {
-                            nxt->completed = true;
-                        }*/
                     }
                     nxt = nxt->next;
                 }
-
             }
         }
-        // here need modify
-        /*if (p->line_count < 0) {
-            //no pipe
-            //proc_ptr++;
-            do_fork(proc[i]);
+        while (!exist_proc.empty()) {
+            my_proc* pr = exist_proc.front();
+            if (pr->completed == false) {
+                if (waitpid(pr->pid, &wstatus, 0) == -1) {
+                    cerr << "failed to wait for child" << endl;
+                }
+                else {
+                    pr->completed = true;
+                }
+
+            }
+            //cout << "pop: " << pr->cname << endl;
+            exist_proc.pop_front();
 
         }
-        else if (proc[i]->line_count == 0){
-            // last one process meet line count, other process
-            // pipe to the same target process is also ready
-            if (proc[i] == nullptr || proc[i]->next == nullptr) {
-                cerr << "something error when construct process pipe: " << proc[i]->cname << endl;
-            }
-            while (proc[i]->next->line_count < 0) {
-
-            }
-            //proc_ptr+=2;
-            do_pipe(proc[i], proc[i]->next);
-            if (waitpid(proc[i]->next->prev.back()->pid, &wstatus, 0) == -1) {
-                cerr << "waiting for child failed" << endl;
-            }
-            else {
-                proc[i]->next->prev.back()->completed = true;
-            }
-
-
-        }*/
     }
     return;
 }
