@@ -39,7 +39,7 @@ public:
 };
 deque<my_proc*> proc;
 deque<my_proc*>::iterator proc_ptr = proc.end();
-
+int proc_indx = 0;
 void create_pipe(int* pipefd) {
 
     if (pipe(pipefd) < 0) {
@@ -61,6 +61,7 @@ bool check_unknown(const char cmd_name[]) {
         return false;
     }
     char* env = (char*)malloc(sizeof(char)*100);
+    char* h = env;
     //getenv("PATH");
     strcpy(env, getenv("PATH"));
 
@@ -88,6 +89,7 @@ bool check_unknown(const char cmd_name[]) {
         }
         env = p+1;
     } while (p != NULL);
+    free(h);
 
     cerr << "Unknown command: [" << cmd_name << "]." << endl;
     return true;
@@ -152,8 +154,8 @@ void do_fork(my_proc* p) {
     //cout << p->line_count << endl;
     if (p->line_count > 0) {
         bool flag = false;
-        for (deque<my_proc*>::iterator it = proc.begin(); it < proc_ptr; it++) {
-            my_proc* p1 = proc[it-proc.begin()];
+        for (int i = 0; i < proc_indx; i++) {
+            my_proc* p1 = proc[i];
 
             if (p1->line_count == p->line_count) {
                 //pipe to the same line later
@@ -376,8 +378,9 @@ void check_proc_pipe(my_proc* cur) {
 }
 void exec_cmd() {
     int wstatus;
-    for (proc_ptr; proc_ptr != proc.end(); proc_ptr++) {
-        my_proc* p = proc[proc_ptr-proc.begin()];
+    for (proc_indx; proc_indx < proc.size(); proc_indx++) {
+        my_proc* p = proc[proc_indx];
+        //cout << i << " ";
         if (p->completed == true || p->pid != -1)
             continue;
         if (check_unknown(p->cname)) {
@@ -412,7 +415,12 @@ void exec_cmd() {
                     }
 
                     if (nxt->next == nullptr) { //reach pipeline end
-                        close_pipe(p->readfd, p->writefd);
+                        if (p->readfd != 0) {
+                            close(p->readfd);
+                        }
+                        if (p->writefd != 1) {
+                            close(p->writefd);
+                        }
                         for (int a = 0; a < used_pipe.size(); a++) {
                             if (used_pipe[a] == p->readfd || used_pipe[a] == p->writefd) {
                                 used_pipe.erase(used_pipe.begin()+a);
