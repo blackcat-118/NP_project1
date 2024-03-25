@@ -22,7 +22,7 @@ deque<char*> cmd;
 class my_proc {
 public:
     my_proc(char* cname): cname(cname), next(nullptr), arg_count(1), arg_list{cname, NULL},
-    line_count(-1), readfd(0), writefd(1), completed(false), pid(-1), output_file{}, err(false) {}
+    line_count(-1), readfd(0), writefd(1), completed(false), pid(-1), output_file{}, err(false), p_flag(false) {}
     my_proc* next;
     deque<my_proc*> prev;
     char* cname;
@@ -35,11 +35,13 @@ public:
     int pid;
     char output_file[100];
     bool err;
+    bool p_flag;
 
 };
 deque<my_proc*> proc;
 deque<my_proc*>::iterator proc_ptr = proc.end();
 int proc_indx = 0;
+int pipe_counter = 0;
 void create_pipe(int* pipefd) {
 
     if (pipe(pipefd) < 0) {
@@ -166,6 +168,8 @@ void do_fork(my_proc* p) {
                 break;
             }
         }
+        if (p->p_flag)
+            flag = false;
         if (flag == false) {
             //cout << "create pipe" << endl;
             create_pipe(&pipefd[0]);
@@ -218,161 +222,31 @@ void do_fork(my_proc* p) {
     return;
 }
 
-/*void do_fork(my_proc* p, int depth, int readfd, int writefd) {
-    //just do fork
-    int wstatus;
-    int pipefd[2];
-
-    my_proc* nxt = p->next;
-    //cout << "cname: " << p->cname<<endl;
-    if (nxt == nullptr) { // reach pipeline end
-        if (check_unknown(p->cname)) {
-            p->completed = true;
-            set_prev_completed(p);
-            return;
-        }
-        p->pid = fork();
-        exist_proc.push_back(p);
-        if (p->pid == -1) {
-            cerr << "can't fork" << endl;
-        }
-        else if (p->pid == 0) {
-            //child process
-            if (readfd != 0) {
-                read_pipe(readfd);
-                //close(readfd);
-            }
-            if (writefd != 1) {
-                //close(writefd);
-            }
-            int fd = 0;
-            if (strlen(p->output_file) != 0) {
-                fd = open(p->output_file, O_TRUNC|O_WRONLY|O_CREAT, 0644);
-                write_pipe(fd);
-            }
-            //cout << p->cname << endl;
-            close_pipes(used_pipe);
-
-            //close_pipe(readfd, writefd);
-            execvp(p->cname, p->arg_list);
-            if (fd != 0)
-                close(fd);
-            exit(0);
-        }
-        else {
-
-        }
-    }
-    else {   // check whether next process has other previous processes to merge
-        if (check_unknown(nxt->cname)) {
-            nxt->completed = true;
-            set_prev_completed(nxt);
-            return;
-        }
-        if (depth >= 256) {
-            my_proc* pr = exist_proc.front();
-            if (waitpid(pr->pid, &wstatus, 0) == -1) {
-                cerr << "failed to wait for child" << endl;
-            }
-            else {
-                pr->completed = true;
-                exist_proc.pop_front();
-            }
-        }
-        create_pipe(&pipefd[0]);
-        used_pipe.push_back(pipefd[0]);
-        used_pipe.push_back(pipefd[1]);
-
-        //do_fork(nxt, depth+1, pipefd[0], pipefd[1]);
-        for (int i = 0; i < nxt->prev.size(); i++) {
-            my_proc* p1 = nxt->prev[i];
-            /*if (i != 0) {
-                //cout << "wait " << nxt->prev[i-1]->cname << endl;
-                if (waitpid(nxt->prev[i-1]->pid, &wstatus, 0) == -1) {
-                    cerr << "waiting for child failed" << endl;
-                }
-                else {
-                    nxt->prev[i-1]->completed = true;
-                }
-            }
-
-            p1->pid = fork();
-            exist_proc.push_back(p1);
-            if (p1->pid == -1) {
-                cerr << "can't fork" << endl;
-            }
-            else if (p1->pid == 0) {
-                // child process
-                //cout << "read: " << readfd << "write: " << pipefd[1] << endl;
-                if (readfd != 0) {
-                    read_pipe(readfd);
-                }
-                if (p1->err) {
-                    wrerr_pipe(pipefd[1]);
-                }
-                else {
-                    write_pipe(pipefd[1]);
-                }
-
-                //close_pipe(pipefd[0], pipefd[1]);
-                //cout << p1->cname << endl;
-                close_pipes(used_pipe);
-
-                execvp(p1->cname, p1->arg_list);
-
-                exit(0);
-            }
-            else {
-                //parent process
-
-                if (nxt->pid < 0) {
-
-                    do_fork(nxt, depth+1, pipefd[0], pipefd[1]);
-                }
-                /*if (waitpid(p1->pid, &wstatus, 0) == -1) {
-                    cerr << "waiting for child failed" << endl;
-                }
-                else {
-                   p1->completed = true;
-                }*/
-
-                /*if (i != 0) {
-                    cout << "wait " << nxt->prev[i-1]->cname << endl;
-                    if (waitpid(nxt->prev[i-1]->pid, &wstatus, 0) == -1) {
-                        cerr << "waiting for child failed" << endl;
-                    }
-                    else {
-                        nxt->prev[i-1]->completed = true;
-                    }
-                }
-            }
-
-        }
-        close_pipe(pipefd[0], pipefd[1]);
-    }
-
-    return;
-
-}*/
-
 void line_counter() {
 
     for (int i = 0; i < proc.size(); i++) {
         proc[i]->line_count--;
-        if (proc[i]->line_count >= 0) { // it must pipe with someone later
-
+        if (proc[i]->p_flag == false && proc[i]->line_count >= 0) {
+            proc[i]->line_count += pipe_counter;
         }
     }
+    pipe_counter = 0;
     return;
 }
 
 void check_proc_pipe(my_proc* cur) {
     // check whether has a process is the current one's prev
     for (int i = 0; i < proc.size()-1; i++) {
-        if (proc[i]->line_count == 0) { // it should pipe with this one
+
+        if (proc[i]->line_count == 0 ) { // it should pipe with this one
             cur->prev.push_back(proc[i]);
             proc[i]->next = cur;
         }
+        /*else if (proc[i]->line_count == 1 && proc[i]->p_flag) {
+            cur->prev.push_back(proc[i]);
+            proc[i]->next = cur;
+        }*/
+
     }
     return;
 }
@@ -410,11 +284,11 @@ void exec_cmd() {
             else {
                 while (nxt) {     //if it has next
                     //my_proc* p1 = p;
-                    if (nxt->line_count > 0) { //it means next's next is not ready
+                    if (nxt->line_count > 0 ) { //it means next's next is not ready
                         break;
                     }
 
-                    if (nxt->next == nullptr) { //reach pipeline end
+                    if (nxt->next == nullptr || p->line_count < -256) { //reach pipeline end
                         if (p->readfd != 0) {
                             close(p->readfd);
                         }
@@ -442,77 +316,13 @@ void exec_cmd() {
     }
     return;
 }
-/*void exec_cmd() {
-
-    int wstatus;
-    // go through the proc queue from not executed place
-    // find some processes can be executed in this time.
-    for (int i = 0; i < proc.size(); i++) {
-        DEBUG_BLOCK (
-                     cout << "check process status: " << proc[i]->cname << endl;
-                     );
-        my_proc* p = proc[i];
-        if (p->completed == true || p->pid != -1)
-            continue;
-
-        if (p->line_count <= 0) {  //it means p's next is ready
-            used_pipe.clear();
-            if (check_unknown(p->cname)) {
-                p->completed = true;
-                set_prev_completed(p);
-                continue;
-            }
-            my_proc* nxt = p->next;
-            if (nxt == nullptr) { //if it doesn't have next
-                do_fork(p, 0, 0, 1);
-                /*if (waitpid(p->pid, &wstatus, 0) == -1) {
-                    cerr << "failed to wait for child" << endl;
-                }
-                else {
-                    p->completed = true;
-                }
-            }
-            else {
-                while (nxt) {     //if it has next
-                    if (nxt->line_count > 0) { //it means next's next is not ready
-                        break;
-                    }
-                    if (check_unknown(nxt->cname)) {
-                        nxt->completed = true;
-                        set_prev_completed(nxt);
-                        break;
-                    }
-                    if (nxt->next == nullptr) { //reach pipeline end
-                        do_fork(p, 0, 0, 1);
-                    }
-                    nxt = nxt->next;
-                }
-            }
-        }
-        while (!exist_proc.empty()) {
-            my_proc* pr = exist_proc.front();
-            if (pr->completed == false) {
-                if (waitpid(pr->pid, &wstatus, 0) == -1) {
-                    cerr << "failed to wait for child" << endl;
-                }
-                else {
-                    pr->completed = true;
-                }
-
-            }
-            //cout << "pop: " << pr->cname << endl;
-            exist_proc.pop_front();
-
-        }
-    }
-    return;
-}*/
 
 void read_cmd() {
     char* cur_cmd;
     char* next_cmd;
-
+    bool flag = false;
     while (cmd.size()) {
+        flag = true;
         cur_cmd = cmd.front();
         cmd.pop_front();
 
@@ -523,9 +333,7 @@ void read_cmd() {
         strcpy(cname, cur_cmd);
         my_proc* cur = new my_proc(cname);
         proc.push_back(cur);
-        if (proc_ptr == proc.end()) {
-            proc_ptr = proc.end()-1;
-        }
+
 
         if (cmd.size() != 0) {    //this block is used for reading pipes or arguments
             next_cmd = cmd.front();
@@ -560,11 +368,15 @@ void read_cmd() {
             }
             if (strcmp(next_cmd, "|") == 0) { //pipe to next
                 cur->line_count = 1;
+                cur->p_flag = true;
+                pipe_counter++;
                 cmd.pop_front();
             }
             else if (strcmp(next_cmd, "!") == 0) {
                 cur->err = true;
                 cur->line_count = 1;
+                cur->p_flag = true;
+                pipe_counter++;
                 cmd.pop_front();
             }
             else if (next_cmd[0] == '|') {  //number pipe
@@ -574,6 +386,7 @@ void read_cmd() {
                 DEBUG_BLOCK (
                              cout << "number pipe of this command: " << cur->line_count << endl;
                 );
+                flag = true;
                 cmd.pop_front();
             }
             else if (next_cmd[0] == '!') {  //number pipe
@@ -584,10 +397,10 @@ void read_cmd() {
                 DEBUG_BLOCK (
                              cout << "number pipe of this command: " << cur->line_count << endl;
                 );
+                flag = true;
                 cmd.pop_front();
             }
         }
-
         check_proc_pipe(cur);
         exec_cmd();
         line_counter();
