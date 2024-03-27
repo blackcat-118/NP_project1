@@ -16,7 +16,7 @@ using namespace std;
 #define DEBUG_BLOCK(statement) do { statement } while (0)
 #endif
 
-#define MAX_ARGUMENTS 10
+#define MAX_ARGUMENTS 15
 
 deque<char*> cmd;
 class my_proc {
@@ -27,7 +27,7 @@ public:
     deque<my_proc*> prev;
     char* cname;
     int arg_count;
-    char* arg_list[10];
+    char* arg_list[15];
     int line_count;
     int readfd;
     int writefd;
@@ -62,7 +62,7 @@ bool check_unknown(const char cmd_name[]) {
                  );
         return false;
     }
-    char* env = (char*)malloc(sizeof(char)*100);
+    char* env = (char*)malloc(sizeof(char)*512);
     char* h = env;
     //getenv("PATH");
     strcpy(env, getenv("PATH"));
@@ -73,7 +73,7 @@ bool check_unknown(const char cmd_name[]) {
         if (p != NULL) {
             p[0] = '\0';
         }
-        char path[256];
+        char path[512];
         strcpy(path, env);
         if (path[strlen(path)-1] != '/') {
             strcat(path, "/");
@@ -124,6 +124,7 @@ void close_pipe(int fd1, int fd2) {
     close(fd2);
     return;
 }
+
 void close_pipes(vector<int> fd) {
 
     for (int i = 0; i < fd.size(); i++) {
@@ -154,8 +155,9 @@ void do_fork(my_proc* p) {
         return;
     }
     //cout << p->line_count << endl;
+    bool flag = false;
     if (p->line_count > 0) {
-        bool flag = false;
+
         for (int i = 0; i < proc_indx; i++) {
             my_proc* p1 = proc[i];
 
@@ -188,6 +190,9 @@ void do_fork(my_proc* p) {
     }
     writefd = p->writefd;
     //cout << p->cname << readfd << writefd << endl;
+    if (flag) { // merge pipe
+        usleep(10000);
+    }
     p->pid = fork();
     exist_proc.push_back(p);
     if (p->pid == -1) {
@@ -252,6 +257,7 @@ void check_proc_pipe(my_proc* cur) {
 }
 void exec_cmd() {
     int wstatus;
+    bool s_flag = false;
     for (proc_indx; proc_indx < proc.size(); proc_indx++) {
         my_proc* p = proc[proc_indx];
         //cout << i << " ";
@@ -263,6 +269,8 @@ void exec_cmd() {
             continue;
         }
         do_fork(p);
+	if (p->line_count > 0)
+	    s_flag = true;
 
     }
     for (int i = 0; i < proc.size(); i++) {
@@ -284,11 +292,11 @@ void exec_cmd() {
             else {
                 while (nxt) {     //if it has next
                     //my_proc* p1 = p;
-                    if (nxt->line_count > 0 ) { //it means next's next is not ready
-                        break;
+                    if (nxt->line_count > 0 ) { //it means next's next is not ready		
+			break;
                     }
 
-                    if (nxt->next == nullptr || p->line_count < -256) { //reach pipeline end
+                    if (nxt->next == nullptr || p->line_count < -100) { //reach pipeline end
                         if (p->readfd != 0) {
                             close(p->readfd);
                         }
@@ -312,8 +320,10 @@ void exec_cmd() {
                     nxt = nxt->next;
                 }
             }
-        }
+	}
     }
+    if (s_flag)
+	usleep(20000);
     return;
 }
 
@@ -329,7 +339,7 @@ void read_cmd() {
         DEBUG_BLOCK (
                      cout << "create proc: " << cur_cmd << endl;
                      );
-        char* cname = (char*)malloc(sizeof(char)*100);
+        char* cname = (char*)malloc(sizeof(char)*257);
         strcpy(cname, cur_cmd);
         my_proc* cur = new my_proc(cname);
         proc.push_back(cur);
@@ -465,7 +475,7 @@ int main(int argc, char** argv, char** envp) {
 
             }
             else {
-                char* s = (char*)malloc(sizeof(char)*100);
+                char* s = (char*)malloc(sizeof(char)*257);
                 strcpy(s, cur_cmd);
                 cmd.push_back(s);
             }
@@ -477,6 +487,9 @@ int main(int argc, char** argv, char** envp) {
 
     }
     free(cur_cmd);
+    for (int i = 0; i < proc.size(); i++) {
+        delete(proc[i]);
+    }
 
     return 0;
 }
